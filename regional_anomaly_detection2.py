@@ -179,6 +179,20 @@ def download_tertiary_share(year: int) -> pd.DataFrame:
     return df
 
 
+def download_population_density(year: int) -> pd.DataFrame:
+    """
+    Population density at NUTS2:
+      dataset: demo_r_d3dens
+    """
+    logging.info("Downloading population density from demo_r_d3dens ...")
+    df = eurostat.get_data_df("demo_r_d3dens")
+    df = eurostat_wide_to_long(df)
+
+    df = filter_nuts2_and_year(df, year)
+    df = df[["geo", "time", "values"]].rename(columns={"values": "pop_density"})
+    return df
+
+
 def build_regional_dataset(year: int) -> pd.DataFrame:
     """
     Download all indicators for the specified year and merge by (geo, time).
@@ -191,10 +205,10 @@ def build_regional_dataset(year: int) -> pd.DataFrame:
     df_gdp = download_gdp_pc(year)
     df_unemp = download_unemployment_rate(year)
     df_tert = download_tertiary_share(year)
-
+    df_pop = download_population_density(year)
     # Merge step-by-step
     df = df_gdp.copy()
-    for other in [df_unemp, df_tert]:
+    for other in [df_unemp, df_tert, df_pop]:
         df = pd.merge(df, other, on=["geo", "time"], how="outer")
 
     # Rename and basic cleaning
@@ -206,7 +220,7 @@ def build_regional_dataset(year: int) -> pd.DataFrame:
     df["region_code"] = df["region_code"].astype(str)
     df = df[df["region_code"].str.len() == 4].copy()
 
-    indicator_cols = ["gdp_pc_pps", "unemployment_rate", "tertiary_share_25_64"]
+    indicator_cols = ["gdp_pc_pps", "unemployment_rate", "tertiary_share_25_64", "pop_density"]
 
     # Collapse duplicates per region_code: first non-null per column
     def first_non_null(series: pd.Series):
@@ -219,6 +233,7 @@ def build_regional_dataset(year: int) -> pd.DataFrame:
             "gdp_pc_pps": first_non_null,
             "unemployment_rate": first_non_null,
             "tertiary_share_25_64": first_non_null,
+            "pop_density": first_non_null,
         }
     )
 
@@ -364,9 +379,9 @@ def plot_pca_iforest(df_out: pd.DataFrame, output_path: str = "fig_pca_iforest.p
     plt.scatter(normal["PC1"], normal["PC2"], alpha=0.6, label="Normal regions")
     plt.scatter(anomalies["PC1"], anomalies["PC2"], marker="x", s=80, label="IForest anomalies")
 
-    plt.xlabel("PC1")
-    plt.ylabel("PC2")
-    plt.title("PCA of regional indicators (Isolation Forest anomalies)")
+    plt.xlabel("PC1", fontsize = 14)
+    plt.ylabel("PC2", fontsize = 14)
+    plt.title("PCA of regional indicators (Isolation Forest anomalies)", fontsize = 16)
     plt.legend()
     plt.tight_layout()
     plt.savefig(output_path)
@@ -481,7 +496,7 @@ def main():
     # ----------------------------------------------------------
     # Select the indicator columns
     # ----------------------------------------------------------
-    indicators = ["gdp_pc_pps", "unemployment_rate", "tertiary_share_25_64"]
+    indicators = ["gdp_pc_pps", "unemployment_rate", "pop_density", "tertiary_share_25_64"]
 
     # Extract indicator matrix
     X = anom[indicators].copy()
@@ -493,15 +508,15 @@ def main():
     # Build heatmap DataFrame with region_code as index
     heat_df = pd.DataFrame(
         X_std,
-        columns=["GDP per capita (std)", "Unemployment rate (std)", "Tertiary education (std)"],
+        columns=["GDP per capita (std)", "Unemployment rate (std)", "Population density", "Tertiary education (std)"],
         index=anom["region_code"]
     )
 
     # ----------------------------------------------------------
     # Plot heatmap
     # ----------------------------------------------------------
-    plt.figure(figsize=(10, 16))
-    sns.heatmap(
+    plt.figure(figsize=(8, 8))
+    ax = sns.heatmap(
         heat_df,
         cmap="coolwarm",
         center=0,
@@ -510,9 +525,23 @@ def main():
         cbar_kws={"label": "Standardized value (z-score)"}
     )
 
-    plt.title("Standardized Indicators for Anomalous NUTS2 Regions (2022)", fontsize=14)
-    plt.xlabel("Indicators")
-    plt.ylabel("Region")
+    # Axis titles
+    plt.title(
+        "Standardized Indicators for Anomalous NUTS2 Regions (2022)",
+        fontsize=16
+    )
+    plt.xlabel("Indicators", fontsize=14)
+    plt.ylabel("Region", fontsize=14)
+
+    # Tick labels (x = indicators, y = regions)
+    plt.xticks(fontsize=12, rotation=45, ha="right")
+    plt.yticks(fontsize=12)
+
+    # Colour bar label + tick labels
+    cbar = ax.collections[0].colorbar
+    cbar.ax.set_ylabel("Standardized value (z-score)", fontsize=14)
+    cbar.ax.tick_params(labelsize=12)
+
     plt.tight_layout()
     plt.savefig("heatmap_anomalies.pdf")
     plt.close()
